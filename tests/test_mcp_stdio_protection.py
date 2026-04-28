@@ -14,6 +14,13 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
+import chromadb
+
+if str(getattr(chromadb, "__version__", "")).endswith("-missing"):
+    pytest.skip("chromadb is not installed in this test environment", allow_module_level=True)
+
 
 def test_module_import_redirects_stdout_to_stderr():
     """At import time, sys.stdout must point at sys.stderr so any stray
@@ -78,6 +85,6 @@ def test_mcp_server_no_stdout_noise_on_clean_exit():
         capture_output=True,
         timeout=60,
     )
-    assert (
-        proc.stdout == b""
-    ), f"stdout must be empty before the first JSON-RPC response, but got: {proc.stdout!r}"
+    assert proc.stdout == b"", (
+        f"stdout must be empty before the first JSON-RPC response, but got: {proc.stdout!r}"
+    )
