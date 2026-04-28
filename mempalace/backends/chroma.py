@@ -227,6 +227,7 @@ def quarantine_stale_hnsw(palace_path: str, stale_seconds: float = 300.0) -> lis
             moved.append(target)
             logger.warning(
                 "Quarantined corrupt HNSW segment %s (sqlite %.0fs newer than HNSW, integrity check failed); renamed to %s",
+                "Quarantined stale HNSW segment %s (sqlite %.0fs newer than HNSW); renamed to %s",
                 seg_dir,
                 sqlite_mtime - hnsw_mtime,
                 target,

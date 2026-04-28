@@ -324,6 +324,25 @@ def _mine_sync():
         except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
             return False
     return True
+def _mine_sync(transcript_path: str = "") -> bool:
+    """Run mempalace mine synchronously (for precompact -- data must land first)."""
+    mine_dir = _get_mine_dir(transcript_path)
+    if not mine_dir:
+        return False
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = STATE_DIR / "hook.log"
+        with open(log_path, "a") as log_f:
+            subprocess.run(
+                [sys.executable, "-m", "mempalace", "mine", mine_dir],
+                stdout=log_f,
+                stderr=log_f,
+                timeout=60,
+                check=True,
+            )
+        return True
+    except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        return False
 
 
 def _desktop_toast(body: str, title: str = "MemPalace"):
@@ -693,6 +712,15 @@ def hook_precompact(data: dict, harness: str):
 
     # Mine MEMPAL_DIR synchronously so project data lands before compaction.
     if _mine_sync():
+        _output({})
+        return
+
+
+    # Capture tool output via our normalize path before compaction loses it.
+    _ingest_transcript(transcript_path)
+
+    # Mine synchronously so data lands before compaction proceeds.
+    if _mine_sync(transcript_path):
         _output({})
         return
 

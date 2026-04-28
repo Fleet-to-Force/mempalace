@@ -639,6 +639,10 @@ def cmd_ready(args):
     import importlib.util
     import json
     from types import SimpleNamespace
+    import json
+    from types import SimpleNamespace
+    from .backends.base import PalaceRef
+    from .backends.chroma import ChromaBackend
 
     palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
     palace_path = os.path.abspath(palace_path)
@@ -653,6 +657,9 @@ def cmd_ready(args):
             "ok": os.access(palace_path, os.W_OK),
             "detail": palace_path,
         }
+    checks.append({"name": "palace directory exists", "ok": os.path.isdir(palace_path), "detail": palace_path})
+    checks.append(
+        {"name": "palace directory writable", "ok": os.access(palace_path, os.W_OK), "detail": palace_path}
     )
     checks.append(
         {
@@ -695,11 +702,52 @@ def cmd_ready(args):
                 "detail": "chromadb not installed",
             }
         )
+    backend = None
+    try:
+        from .backends.chroma import ChromaBackend
+    except Exception as e:
+        checks.append({"name": "backend health", "ok": False, "detail": str(e)})
+        health = None
+    else:
+        try:
+            backend = ChromaBackend()
+            health = backend.health()
+            checks.append({"name": "backend health", "ok": health.ok, "detail": health.detail or "ok"})
+        except Exception as e:
+            checks.append({"name": "backend health", "ok": False, "detail": str(e)})
+            health = None
 
     try:
         if backend is None or health is None or not health.ok:
             raise RuntimeError("backend unavailable")
         palace_ref = SimpleNamespace(id=palace_path, local_path=palace_path)
+    checks: list[tuple[str, bool, str]] = []
+
+    checks.append(("palace directory exists", os.path.isdir(palace_path), palace_path))
+    checks.append(("palace directory writable", os.access(palace_path, os.W_OK), palace_path))
+    checks.append(
+        (
+            "palace database present",
+            os.path.isfile(os.path.join(palace_path, "chroma.sqlite3")),
+            os.path.join(palace_path, "chroma.sqlite3"),
+        )
+    )
+
+    try:
+        backend = ChromaBackend()
+        health = backend.health()
+        checks.append({"name": "backend health", "ok": health.ok, "detail": health.detail or "ok"})
+    except Exception as e:
+        checks.append({"name": "backend health", "ok": False, "detail": str(e)})
+        checks.append(("backend health", health.ok, health.detail or "ok"))
+    except Exception as e:
+        checks.append(("backend health", False, str(e)))
+        health = None
+
+    try:
+        if health is None or not health.ok:
+            raise RuntimeError("backend unavailable")
+        palace_ref = PalaceRef(id=palace_path, local_path=palace_path)
         col = backend.get_collection(
             palace=palace_ref,
             collection_name="mempalace_drawers",
@@ -709,6 +757,7 @@ def cmd_ready(args):
         checks.append(
             {"name": "drawers collection readable", "ok": True, "detail": f"{count} drawers"}
         )
+        checks.append({"name": "drawers collection readable", "ok": True, "detail": f"{count} drawers"})
     except Exception as e:
         checks.append({"name": "drawers collection readable", "ok": False, "detail": str(e)})
 
@@ -743,6 +792,21 @@ def cmd_repair_status(args):
 
     palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
     repair_status(palace_path=palace_path)
+        checks.append(("drawers collection readable", True, f"{count} drawers"))
+    except Exception as e:
+        checks.append(("drawers collection readable", False, str(e)))
+
+    print("\n  MemPalace production readiness")
+    print("  " + "=" * 34)
+    for label, ok, detail in checks:
+        mark = "PASS" if ok else "FAIL"
+        print(f"  [{mark}] {label}: {detail}")
+
+    failures = [c for c in checks if not c[1]]
+    if failures:
+        print(f"\n  Result: NOT READY ({len(failures)} check(s) failed)")
+        sys.exit(1)
+    print("\n  Result: READY")
 
 
 def cmd_repair(args):
@@ -1344,6 +1408,10 @@ def main():
         "--json",
         action="store_true",
         help="Output readiness result as JSON (for CI/automation)",
+    )
+    sub.add_parser(
+        "ready",
+        help="Run production-readiness checks for your palace",
     )
 
     # migrate
