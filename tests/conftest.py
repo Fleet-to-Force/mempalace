@@ -12,7 +12,9 @@ instead of the real user profile.
 
 import os
 import shutil
+import sys
 import tempfile
+import types
 
 # ── Isolate HOME before any mempalace imports ──────────────────────────
 _original_env = {}
@@ -27,8 +29,26 @@ os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
 
 # Now it is safe to import mempalace modules that trigger initialisation.
-import chromadb  # noqa: E402
 import pytest  # noqa: E402
+
+try:  # noqa: E402
+    import chromadb  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    chromadb = types.ModuleType("chromadb")
+
+    class _MissingPersistentClient:
+        def __init__(self, *args, **kwargs):
+            raise ModuleNotFoundError("chromadb is not installed in this test environment")
+
+    chromadb.PersistentClient = _MissingPersistentClient
+    sys.modules["chromadb"] = chromadb
+
+if "yaml" not in sys.modules:  # pragma: no cover - environment-dependent
+    yaml_stub = types.ModuleType("yaml")
+    yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+    yaml_stub.safe_dump = lambda *_args, **_kwargs: ""
+    yaml_stub.dump = yaml_stub.safe_dump
+    sys.modules["yaml"] = yaml_stub
 
 from mempalace.config import MempalaceConfig  # noqa: E402
 from mempalace.knowledge_graph import KnowledgeGraph  # noqa: E402
