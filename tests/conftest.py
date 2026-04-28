@@ -42,6 +42,14 @@ def _install_missing_chromadb_stub():
     chromadb = types.ModuleType("chromadb")
     chromadb.__version__ = "0.0.0-missing"
 
+    class _MissingMetadata(dict):
+        def get(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
+
+    class _MissingCollection:
+        def __init__(self):
+            self.metadata = _MissingMetadata()
+
     class _MissingCollection:
         def __getattr__(self, _name):
             def _skip(*_args, **_kwargs):
@@ -60,6 +68,11 @@ def _install_missing_chromadb_stub():
         def get_collection(self, *args, **kwargs):
             return _MissingCollection()
 
+        def create_collection(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
+
+        def delete_collection(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
         def delete_collection(self, *args, **kwargs):
             pytest.skip("chromadb is not installed in this test environment")
 try:  # noqa: E402
@@ -119,6 +132,14 @@ def _reset_mcp_cache():
 
             mcp_server._client_cache = None
             mcp_server._collection_cache = None
+        except (ImportError, AttributeError):
+            pass
+        try:
+            # Reset the per-process quarantine gate so tests don't leak
+            # state through ChromaBackend._quarantined_paths.
+            from mempalace.backends.chroma import ChromaBackend
+
+            ChromaBackend._quarantined_paths.clear()
         except (ImportError, AttributeError):
             pass
 
