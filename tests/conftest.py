@@ -31,9 +31,14 @@ os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
 # Now it is safe to import mempalace modules that trigger initialisation.
 import pytest  # noqa: E402
 
-try:  # noqa: E402
-    import chromadb  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+
+def _install_missing_chromadb_stub():
+    """Install a minimal chromadb shim that skips dependency-bound tests.
+
+    This keeps dependency-independent tests runnable in constrained
+    environments while making chroma-backed tests skip explicitly.
+    """
+    global chromadb
     chromadb = types.ModuleType("chromadb")
     chromadb.__version__ = "0.0.0-missing"
 
@@ -61,9 +66,9 @@ except ModuleNotFoundError:  # pragma: no cover - environment-dependent
     chromadb.PersistentClient = _MissingPersistentClient
     sys.modules["chromadb"] = chromadb
 
-try:  # noqa: E402
-    import yaml  # type: ignore  # noqa: F401
-except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+
+def _install_missing_yaml_stub():
+    """Install a minimal yaml shim that skips dependency-bound tests."""
     yaml_stub = types.ModuleType("yaml")
 
     def _missing_yaml(*_args, **_kwargs):
@@ -73,6 +78,17 @@ except ModuleNotFoundError:  # pragma: no cover - environment-dependent
     yaml_stub.safe_dump = _missing_yaml
     yaml_stub.dump = _missing_yaml
     sys.modules["yaml"] = yaml_stub
+
+
+try:  # noqa: E402
+    import chromadb  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    _install_missing_chromadb_stub()
+
+try:  # noqa: E402
+    import yaml  # type: ignore  # noqa: F401
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    _install_missing_yaml_stub()
 
 from mempalace.config import MempalaceConfig  # noqa: E402
 from mempalace.knowledge_graph import KnowledgeGraph  # noqa: E402
