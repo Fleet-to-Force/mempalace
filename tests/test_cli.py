@@ -1,18 +1,21 @@
 """Tests for mempalace.cli — the main CLI dispatcher."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mempalace.backends.base import HealthStatus
 from mempalace.cli import (
     cmd_compress,
     cmd_hook,
     cmd_init,
     cmd_instructions,
     cmd_mine,
+    cmd_ready,
     cmd_repair,
     cmd_search,
     cmd_split,
@@ -45,6 +48,111 @@ def test_cmd_status_custom_palace(mock_config_cls):
 
         expected = os.path.expanduser("~/my_palace")
         mock_miner.status.assert_called_once_with(palace_path=expected)
+
+
+# ── cmd_ready ─────────────────────────────────────────────────────────
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_ready_success(mock_config_cls, tmp_path, capsys):
+    palace_dir = tmp_path / "palace"
+    palace_dir.mkdir()
+    (palace_dir / "chroma.sqlite3").write_text("db")
+    mock_config_cls.return_value.palace_path = str(palace_dir)
+    args = argparse.Namespace(palace=None)
+
+    mock_col = MagicMock()
+    mock_col.count.return_value = 12
+    mock_backend = MagicMock()
+    mock_backend.health.return_value = HealthStatus.healthy()
+    mock_backend.get_collection.return_value = mock_col
+
+    with (
+        patch("importlib.util.find_spec", return_value=object()),
+        patch("mempalace.backends.chroma.ChromaBackend", return_value=mock_backend),
+    ):
+        cmd_ready(args)
+
+    out = capsys.readouterr().out
+    assert "READY" in out
+    assert "12 drawers" in out
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_ready_failure_exits(mock_config_cls, tmp_path, capsys):
+    palace_dir = tmp_path / "palace"
+    palace_dir.mkdir()
+    mock_config_cls.return_value.palace_path = str(palace_dir)
+    args = argparse.Namespace(palace=None)
+
+    mock_backend = MagicMock()
+    mock_backend.health.return_value = HealthStatus.unhealthy("backend closed")
+    mock_backend.get_collection.side_effect = RuntimeError("missing collection")
+
+    with (
+        patch("importlib.util.find_spec", return_value=object()),
+        patch("mempalace.backends.chroma.ChromaBackend", return_value=mock_backend),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cmd_ready(args)
+
+    assert exc_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "NOT READY" in out
+    assert "backend closed" in out
+    assert "backend unavailable" in out
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_ready_json_success(mock_config_cls, tmp_path, capsys):
+    palace_dir = tmp_path / "palace"
+    palace_dir.mkdir()
+    (palace_dir / "chroma.sqlite3").write_text("db")
+    mock_config_cls.return_value.palace_path = str(palace_dir)
+    args = argparse.Namespace(palace=None, json=True)
+
+    mock_col = MagicMock()
+    mock_col.count.return_value = 3
+    mock_backend = MagicMock()
+    mock_backend.health.return_value = HealthStatus.healthy()
+    mock_backend.get_collection.return_value = mock_col
+
+    with (
+        patch("importlib.util.find_spec", return_value=object()),
+        patch("mempalace.backends.chroma.ChromaBackend", return_value=mock_backend),
+    ):
+        cmd_ready(args)
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["ready"] is True
+    assert payload["failed_checks"] == 0
+    assert any(c["name"] == "drawers collection readable" for c in payload["checks"])
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_ready_json_missing_chromadb_exits(mock_config_cls, tmp_path, capsys):
+    palace_dir = tmp_path / "palace"
+    palace_dir.mkdir()
+    (palace_dir / "chroma.sqlite3").write_text("db")
+    mock_config_cls.return_value.palace_path = str(palace_dir)
+    args = argparse.Namespace(palace=None, json=True)
+
+    with (
+        patch("importlib.util.find_spec", return_value=None),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cmd_ready(args)
+
+    assert exc_info.value.code == 1
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["ready"] is False
+    assert payload["failed_checks"] >= 3
+    checks_by_name = {c["name"]: c for c in payload["checks"]}
+    assert checks_by_name["chromadb dependency available"]["ok"] is False
+    assert checks_by_name["backend health"]["ok"] is False
+    assert checks_by_name["drawers collection readable"]["ok"] is False
 
 
 # ── cmd_search ─────────────────────────────────────────────────────────
@@ -277,6 +385,15 @@ def test_main_status_dispatches():
     with (
         patch("sys.argv", ["mempalace", "status"]),
         patch("mempalace.cli.cmd_status") as mock_cmd,
+    ):
+        main()
+        mock_cmd.assert_called_once()
+
+
+def test_main_ready_dispatches():
+    with (
+        patch("sys.argv", ["mempalace", "ready"]),
+        patch("mempalace.cli.cmd_ready") as mock_cmd,
     ):
         main()
         mock_cmd.assert_called_once()
