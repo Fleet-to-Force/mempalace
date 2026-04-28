@@ -259,6 +259,60 @@ def cmd_status(args):
     status(palace_path=palace_path)
 
 
+def cmd_ready(args):
+    """Run production-readiness checks for the configured palace."""
+    from .backends.base import PalaceRef
+    from .backends.chroma import ChromaBackend
+
+    palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
+    palace_path = os.path.abspath(palace_path)
+    checks: list[tuple[str, bool, str]] = []
+
+    checks.append(("palace directory exists", os.path.isdir(palace_path), palace_path))
+    checks.append(("palace directory writable", os.access(palace_path, os.W_OK), palace_path))
+    checks.append(
+        (
+            "palace database present",
+            os.path.isfile(os.path.join(palace_path, "chroma.sqlite3")),
+            os.path.join(palace_path, "chroma.sqlite3"),
+        )
+    )
+
+    try:
+        backend = ChromaBackend()
+        health = backend.health()
+        checks.append(("backend health", health.ok, health.detail or "ok"))
+    except Exception as e:
+        checks.append(("backend health", False, str(e)))
+        health = None
+
+    try:
+        if health is None or not health.ok:
+            raise RuntimeError("backend unavailable")
+        palace_ref = PalaceRef(id=palace_path, local_path=palace_path)
+        col = backend.get_collection(
+            palace=palace_ref,
+            collection_name="mempalace_drawers",
+            create=False,
+        )
+        count = col.count()
+        checks.append(("drawers collection readable", True, f"{count} drawers"))
+    except Exception as e:
+        checks.append(("drawers collection readable", False, str(e)))
+
+    print("\n  MemPalace production readiness")
+    print("  " + "=" * 34)
+    for label, ok, detail in checks:
+        mark = "PASS" if ok else "FAIL"
+        print(f"  [{mark}] {label}: {detail}")
+
+    failures = [c for c in checks if not c[1]]
+    if failures:
+        print(f"\n  Result: NOT READY ({len(failures)} check(s) failed)")
+        sys.exit(1)
+    print("\n  Result: READY")
+
+
 def cmd_repair(args):
     """Rebuild palace vector index from SQLite metadata."""
     import shutil
@@ -687,6 +741,11 @@ def main():
     )
 
     # status
+    sub.add_parser(
+        "ready",
+        help="Run production-readiness checks for your palace",
+    )
+
     # migrate
     p_migrate = sub.add_parser(
         "migrate",
@@ -738,6 +797,7 @@ def main():
         "repair": cmd_repair,
         "migrate": cmd_migrate,
         "status": cmd_status,
+        "ready": cmd_ready,
     }
     dispatch[args.command](args)
 
