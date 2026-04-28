@@ -30,8 +30,6 @@ import tempfile
 import threading
 import time
 
-import yaml
-
 from mempalace.miner import (
     _extract_entities_for_metadata,
     _load_known_entities,
@@ -95,6 +93,12 @@ class TestMineLock:
         assert time.time() - start < 1.0
 
     def test_lock_blocks_concurrent_access(self, tmp_path):
+        import chromadb
+
+        if str(getattr(chromadb, "__version__", "")).endswith("-missing"):
+            import pytest
+
+            pytest.skip("chromadb is not installed in this test environment")
         """The lock's contract is inter-*process* (multi-agent), not
         inter-thread. Use multiprocessing so the test reflects the real
         use case and is portable: on macOS/BSD ``fcntl.flock`` is
@@ -285,7 +289,7 @@ class TestMinerClosetRebuild:
         project = tmp_path / "proj"
         project.mkdir()
         (project / "mempalace.yaml").write_text(
-            yaml.dump({"wing": "proj", "rooms": [{"name": "general", "description": "x"}]})
+            "wing: proj\nrooms:\n  - name: general\n    description: x\n"
         )
         target = project / "doc.md"
 

@@ -20,6 +20,10 @@ from mempalace.backends.chroma import (
 )
 
 
+def _has_real_chromadb() -> bool:
+    return not str(getattr(chromadb, "__version__", "")).endswith("-missing")
+
+
 class _FakeCollection:
     """Stand-in for a chromadb.Collection returning raw chroma-shaped dicts."""
 
@@ -242,6 +246,8 @@ def test_chroma_cache_invalidates_when_db_file_missing(tmp_path):
 
 def test_chroma_cache_picks_up_db_created_after_first_open(tmp_path):
     """The 0 → nonzero stat transition invalidates a cache built before the DB existed."""
+    if not _has_real_chromadb():
+        pytest.skip("chromadb is not installed in this test environment")
     backend = ChromaBackend()
     palace_path = tmp_path / "palace"
     palace_path.mkdir()
@@ -321,6 +327,8 @@ def test_chroma_backend_create_true_creates_directory_and_collection(tmp_path):
 
 
 def test_chroma_backend_creates_collection_with_cosine_distance(tmp_path):
+    if not _has_real_chromadb():
+        pytest.skip("chromadb is not installed in this test environment")
     palace_path = tmp_path / "palace"
 
     ChromaBackend().get_collection(
