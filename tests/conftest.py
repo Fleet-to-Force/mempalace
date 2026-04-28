@@ -12,7 +12,9 @@ instead of the real user profile.
 
 import os
 import shutil
+import sys
 import tempfile
+import types
 
 # ── Isolate HOME before any mempalace imports ──────────────────────────
 _original_env = {}
@@ -27,8 +29,50 @@ os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
 
 # Now it is safe to import mempalace modules that trigger initialisation.
-import chromadb  # noqa: E402
 import pytest  # noqa: E402
+
+try:  # noqa: E402
+    import chromadb  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    chromadb = types.ModuleType("chromadb")
+    chromadb.__version__ = "0.0.0-missing"
+
+    class _MissingCollection:
+        def __getattr__(self, _name):
+            def _skip(*_args, **_kwargs):
+                pytest.skip("chromadb is not installed in this test environment")
+
+            return _skip
+
+    class _MissingPersistentClient:
+        def __init__(self, *args, **kwargs):
+            self._args = args
+            self._kwargs = kwargs
+
+        def get_or_create_collection(self, *args, **kwargs):
+            return _MissingCollection()
+
+        def get_collection(self, *args, **kwargs):
+            return _MissingCollection()
+
+        def delete_collection(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
+
+    chromadb.PersistentClient = _MissingPersistentClient
+    sys.modules["chromadb"] = chromadb
+
+try:  # noqa: E402
+    import yaml  # type: ignore  # noqa: F401
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    yaml_stub = types.ModuleType("yaml")
+
+    def _missing_yaml(*_args, **_kwargs):
+        pytest.skip("pyyaml is not installed in this test environment")
+
+    yaml_stub.safe_load = _missing_yaml
+    yaml_stub.safe_dump = _missing_yaml
+    yaml_stub.dump = _missing_yaml
+    sys.modules["yaml"] = yaml_stub
 
 from mempalace.config import MempalaceConfig  # noqa: E402
 from mempalace.knowledge_graph import KnowledgeGraph  # noqa: E402

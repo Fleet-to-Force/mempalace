@@ -5,11 +5,10 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - build/conversion-kit
+      - develop
   pull_request:
     branches:
       - develop
-      - main
 
 permissions:
   contents: read
@@ -57,7 +56,7 @@ jobs:
       - name: Fetch integration refs
         if: steps.reconciler.outputs.available == 'true'
         run: |
-          git fetch origin develop build/conversion-kit --prune
+          git fetch origin develop --prune
 
       - name: Run semantic reconciler plan
         if: steps.reconciler.outputs.available == 'true'
@@ -67,8 +66,8 @@ jobs:
             --policy tools/mempalace_execution_kit/reconcile_policy.mempalace.yaml \
             --mode internal \
             --action plan \
-            --base-ref build/conversion-kit \
-            --incoming-ref origin/develop
+            --base-ref origin/develop \
+            --incoming-ref HEAD
 
       - name: Upload reconciler artifacts
         if: always() && steps.reconciler.outputs.available == 'true'

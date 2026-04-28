@@ -277,11 +277,11 @@ def _maybe_auto_ingest(transcript_path: str = ""):
         pass
 
 
-def _mine_sync(transcript_path: str = ""):
+def _mine_sync(transcript_path: str = "") -> bool:
     """Run mempalace mine synchronously (for precompact -- data must land first)."""
     mine_dir = _get_mine_dir(transcript_path)
     if not mine_dir:
-        return
+        return False
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         log_path = STATE_DIR / "hook.log"
@@ -291,9 +291,11 @@ def _mine_sync(transcript_path: str = ""):
                 stdout=log_f,
                 stderr=log_f,
                 timeout=60,
+                check=True,
             )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+        return True
+    except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        return False
 
 
 def _desktop_toast(body: str, title: str = "MemPalace"):
@@ -496,19 +498,21 @@ def _wing_from_transcript_path(transcript_path: str) -> str:
         ~/.claude/projects/-home-<user>-dev-<parent>-<project>/session.jsonl
         ~/.claude/projects/-Users-<user>-<folder>-<project>/session.jsonl
 
-    The project directory name is the final dash-separated token of the
-    encoded folder. Returns ``wing_<project>`` (lowercased, spaces → ``_``).
+    The project directory name is usually inferred from an explicit
+    ``-Projects-<project>`` marker; if absent, we fall back to the final
+    dash-separated token of the encoded folder. Returns ``wing_<project>``
+    (lowercased, spaces → ``_``).
     Falls back to ``wing_sessions`` if the path does not match a Claude Code
     project-folder layout.
     """
     # Normalize path separators for cross-platform (Windows backslashes)
     normalized = transcript_path.replace("\\", "/")
-    # Primary: pull the encoded project folder out of ``.claude/projects/``
-    # and take its last dash-separated token.
+    # Primary: pull the encoded project folder out of ``.claude/projects/``.
     match = re.search(r"/\.claude/projects/-([^/]+)", normalized)
     if match:
         encoded = match.group(1)
-        project = encoded.rsplit("-", 1)[-1]
+        marker = re.search(r"(?i)(?:^|-)projects-(.+)$", encoded)
+        project = marker.group(1) if marker else encoded.rsplit("-", 1)[-1]
         if project:
             return f"wing_{project.lower().replace(' ', '_')}"
     # Legacy fallback: explicit ``-Projects-<name>`` segment, useful for
@@ -644,21 +648,27 @@ def hook_session_start(data: dict, harness: str):
 
 
 def hook_precompact(data: dict, harness: str):
-    """Precompact hook: mine transcript synchronously, then allow compaction."""
+    """Precompact hook: enforce final checkpoint before allowing compaction."""
     parsed = _parse_harness_input(data, harness)
     session_id = parsed["session_id"]
     transcript_path = parsed["transcript_path"]
 
     _log(f"PRE-COMPACT triggered for session {session_id}")
 
-    # Capture tool output via our normalize path before compaction loses it
-    if transcript_path:
-        _ingest_transcript(transcript_path)
+    # Missing transcript path means we cannot guarantee a final checkpoint.
+    if not transcript_path:
+        _output({"decision": "block", "reason": PRECOMPACT_BLOCK_REASON})
+        return
 
-    # Mine synchronously so data lands before compaction proceeds
-    _mine_sync(transcript_path)
+    # Capture tool output via our normalize path before compaction loses it.
+    _ingest_transcript(transcript_path)
 
-    _output({})
+    # Mine synchronously so data lands before compaction proceeds.
+    if _mine_sync(transcript_path):
+        _output({})
+        return
+
+    _output({"decision": "block", "reason": PRECOMPACT_BLOCK_REASON})
 
 
 def run_hook(hook_name: str, harness: str):
