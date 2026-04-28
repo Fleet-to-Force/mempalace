@@ -262,6 +262,7 @@ def cmd_status(args):
 def cmd_ready(args):
     """Run production-readiness checks for the configured palace."""
     import json
+    from types import SimpleNamespace
     from .backends.base import PalaceRef
     from .backends.chroma import ChromaBackend
 
@@ -279,6 +280,27 @@ def cmd_ready(args):
             "ok": os.path.isfile(os.path.join(palace_path, "chroma.sqlite3")),
             "detail": os.path.join(palace_path, "chroma.sqlite3"),
         }
+    )
+
+    backend = None
+    try:
+        from .backends.chroma import ChromaBackend
+    except Exception as e:
+        checks.append({"name": "backend health", "ok": False, "detail": str(e)})
+        health = None
+    else:
+        try:
+            backend = ChromaBackend()
+            health = backend.health()
+            checks.append({"name": "backend health", "ok": health.ok, "detail": health.detail or "ok"})
+        except Exception as e:
+            checks.append({"name": "backend health", "ok": False, "detail": str(e)})
+            health = None
+
+    try:
+        if backend is None or health is None or not health.ok:
+            raise RuntimeError("backend unavailable")
+        palace_ref = SimpleNamespace(id=palace_path, local_path=palace_path)
     checks: list[tuple[str, bool, str]] = []
 
     checks.append(("palace directory exists", os.path.isdir(palace_path), palace_path))

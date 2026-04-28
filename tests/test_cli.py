@@ -1,6 +1,7 @@
 """Tests for mempalace.cli — the main CLI dispatcher."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -96,6 +97,54 @@ def test_cmd_ready_failure_exits(mock_config_cls, tmp_path, capsys):
     assert "NOT READY" in out
     assert "backend closed" in out
     assert "backend unavailable" in out
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_ready_json_success(mock_config_cls, tmp_path, capsys):
+    palace_dir = tmp_path / "palace"
+    palace_dir.mkdir()
+    (palace_dir / "chroma.sqlite3").write_text("db")
+    mock_config_cls.return_value.palace_path = str(palace_dir)
+    args = argparse.Namespace(palace=None, json=True)
+
+    mock_col = MagicMock()
+    mock_col.count.return_value = 3
+    mock_backend = MagicMock()
+    mock_backend.health.return_value = HealthStatus.healthy()
+    mock_backend.get_collection.return_value = mock_col
+
+    with patch("mempalace.backends.chroma.ChromaBackend", return_value=mock_backend):
+        cmd_ready(args)
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["ready"] is True
+    assert payload["failed_checks"] == 0
+    assert any(c["name"] == "drawers collection readable" for c in payload["checks"])
+
+
+@patch("mempalace.cli.MempalaceConfig")
+def test_cmd_ready_json_missing_chromadb_exits(mock_config_cls, tmp_path, capsys):
+    palace_dir = tmp_path / "palace"
+    palace_dir.mkdir()
+    (palace_dir / "chroma.sqlite3").write_text("db")
+    mock_config_cls.return_value.palace_path = str(palace_dir)
+    args = argparse.Namespace(palace=None, json=True)
+
+    with (
+        patch.dict(sys.modules, {"mempalace.backends.chroma": None}),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cmd_ready(args)
+
+    assert exc_info.value.code == 1
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["ready"] is False
+    assert payload["failed_checks"] >= 2
+    checks_by_name = {c["name"]: c for c in payload["checks"]}
+    assert checks_by_name["backend health"]["ok"] is False
+    assert checks_by_name["drawers collection readable"]["ok"] is False
 
 
 # ── cmd_search ─────────────────────────────────────────────────────────
