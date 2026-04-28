@@ -279,6 +279,16 @@ def cmd_ready(args):
             "ok": os.path.isfile(os.path.join(palace_path, "chroma.sqlite3")),
             "detail": os.path.join(palace_path, "chroma.sqlite3"),
         }
+    checks: list[tuple[str, bool, str]] = []
+
+    checks.append(("palace directory exists", os.path.isdir(palace_path), palace_path))
+    checks.append(("palace directory writable", os.access(palace_path, os.W_OK), palace_path))
+    checks.append(
+        (
+            "palace database present",
+            os.path.isfile(os.path.join(palace_path, "chroma.sqlite3")),
+            os.path.join(palace_path, "chroma.sqlite3"),
+        )
     )
 
     try:
@@ -287,6 +297,9 @@ def cmd_ready(args):
         checks.append({"name": "backend health", "ok": health.ok, "detail": health.detail or "ok"})
     except Exception as e:
         checks.append({"name": "backend health", "ok": False, "detail": str(e)})
+        checks.append(("backend health", health.ok, health.detail or "ok"))
+    except Exception as e:
+        checks.append(("backend health", False, str(e)))
         health = None
 
     try:
@@ -326,6 +339,21 @@ def cmd_ready(args):
         sys.exit(1)
     if not getattr(args, "json", False):
         print("\n  Result: READY")
+        checks.append(("drawers collection readable", True, f"{count} drawers"))
+    except Exception as e:
+        checks.append(("drawers collection readable", False, str(e)))
+
+    print("\n  MemPalace production readiness")
+    print("  " + "=" * 34)
+    for label, ok, detail in checks:
+        mark = "PASS" if ok else "FAIL"
+        print(f"  [{mark}] {label}: {detail}")
+
+    failures = [c for c in checks if not c[1]]
+    if failures:
+        print(f"\n  Result: NOT READY ({len(failures)} check(s) failed)")
+        sys.exit(1)
+    print("\n  Result: READY")
 
 
 def cmd_repair(args):
@@ -764,6 +792,10 @@ def main():
         "--json",
         action="store_true",
         help="Output readiness result as JSON (for CI/automation)",
+    )
+    sub.add_parser(
+        "ready",
+        help="Run production-readiness checks for your palace",
     )
 
     # migrate
