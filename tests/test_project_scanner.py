@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -362,11 +363,14 @@ def test_to_detected_dict_shape():
     projects = [ProjectInfo(name="p", repo_root=Path("."), is_mine=True, manifest="package.json")]
     people = [PersonInfo(name="Jane Doe", total_commits=5, repos={"r"})]
     d = to_detected_dict(projects, people)
-    assert set(d.keys()) == {"people", "projects", "uncertain"}
+    # ``topics`` is the LLM-refine bucket for cross-wing tunnel signal —
+    # always present even when empty so callers can rely on the shape.
+    assert set(d.keys()) == {"people", "projects", "topics", "uncertain"}
     assert d["projects"][0]["name"] == "p"
     assert d["projects"][0]["type"] == "project"
     assert d["people"][0]["name"] == "Jane Doe"
     assert d["people"][0]["type"] == "person"
+    assert d["topics"] == []
     assert d["uncertain"] == []
 
 
@@ -478,6 +482,77 @@ def test_discover_entities_prefers_real_signal_over_prose(tmp_path):
     d = discover_entities(str(tmp_path))
     proj_names = [e["name"] for e in d["projects"]]
     assert "realproj" in proj_names
+
+
+def test_discover_entities_keeps_uncertain_for_llm_when_real_signal(tmp_path):
+    """With --llm, regex-uncertain prose candidates should reach refinement."""
+    (tmp_path / "package.json").write_text(json.dumps({"name": "realproj"}))
+    _init_git_repo(tmp_path)
+    (tmp_path / "doc.md").write_text("Noise appeared. Noise repeated. Noise again.")
+
+    class FakeProvider:
+        def __init__(self):
+            self.prompts = []
+
+        def classify(self, _system, user, json_mode=True):
+            self.prompts.append(user)
+            return SimpleNamespace(
+                text='{"classifications": [{"name": "Noise", "label": "COMMON_WORD"}]}'
+            )
+
+    provider = FakeProvider()
+    d = discover_entities(str(tmp_path), llm_provider=provider, show_progress=False)
+
+    assert len(provider.prompts) == 1
+    assert "Noise" in provider.prompts[0]
+    assert "Noise" not in [e["name"] for cat in d.values() for e in cat]
+
+
+def test_discover_entities_keeps_llm_only_project_uncertain_when_real_signal(tmp_path):
+    """Repo roots should not auto-promote LLM-only tools/topics into projects."""
+    (tmp_path / "package.json").write_text(json.dumps({"name": "realproj"}))
+    _init_git_repo(tmp_path)
+    (tmp_path / "doc.md").write_text("Terraform shipped. Terraform changed. Terraform runs.")
+
+    class FakeProvider:
+        def classify(self, _system, _user, json_mode=True):
+            return SimpleNamespace(
+                text='{"classifications": [{"name": "Terraform", "label": "PROJECT"}]}'
+            )
+
+    d = discover_entities(str(tmp_path), llm_provider=FakeProvider(), show_progress=False)
+
+    assert "realproj" in [e["name"] for e in d["projects"]]
+    assert "Terraform" not in [e["name"] for e in d["projects"]]
+    assert "Terraform" in [e["name"] for e in d["uncertain"]]
+
+
+def test_discover_entities_collapses_case_variants_between_manifest_and_convo(tmp_path):
+    """A project named `myproj` in a manifest and `MyProj` as a Claude Code
+    cwd must collapse into one entry. Matches the case-insensitive dedup
+    used by `_merge_detected` and `miner.add_to_known_entities`."""
+    root = tmp_path / "projects_root"
+    root.mkdir()
+
+    # Entry 1: a git+manifest project named lowercase `myproj`
+    repo = root / "-home-u-src-myproj"
+    repo.mkdir()
+    (repo / "package.json").write_text(json.dumps({"name": "myproj"}))
+    _init_git_repo(repo)
+
+    # Entry 2: same root ALSO looks like a Claude Code `.claude/projects/` dir;
+    # the convo_scanner inside will resolve `cwd` to `/home/u/src/MyProj`
+    # (CamelCase variant of the same project).
+    session = repo / "abc.jsonl"
+    session.write_text(json.dumps({"type": "user", "cwd": "/home/u/src/MyProj"}) + "\n")
+
+    d = discover_entities(str(root))
+
+    project_names = [e["name"] for e in d["projects"]]
+    # One entry, not two. First-seen casing ("myproj" from the manifest scan)
+    # is the winner since it was seeded first.
+    assert len(project_names) == 1
+    assert project_names[0].lower() == "myproj"
 
 
 # ── _UnionFind basics ──────────────────────────────────────────────────
