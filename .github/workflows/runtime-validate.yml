@@ -4,11 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - build/conversion-kit
+      - develop
   pull_request:
     branches:
       - develop
-      - main
 
 permissions:
   contents: read

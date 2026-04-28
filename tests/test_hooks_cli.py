@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mempalace.hooks_cli import (
+    PRECOMPACT_BLOCK_REASON,
     SAVE_INTERVAL,
     _count_human_messages,
     _extract_recent_messages,
@@ -294,11 +295,14 @@ def test_session_start_passes_through(tmp_path):
 
 
 def test_precompact_allows(tmp_path):
-    result = _capture_hook_output(
-        hook_precompact,
-        {"session_id": "test"},
-        state_dir=tmp_path,
-    )
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("")
+    with patch("mempalace.hooks_cli._mine_sync", return_value=True):
+        result = _capture_hook_output(
+            hook_precompact,
+            {"session_id": "test", "transcript_path": str(transcript)},
+            state_dir=tmp_path,
+        )
     assert result == {}
 
 
@@ -308,6 +312,11 @@ def test_precompact_allows(tmp_path):
 def test_wing_from_transcript_path_extracts_project():
     path = "/home/jp/.claude/projects/-home-jp-Projects-memorypalace/session.jsonl"
     assert _wing_from_transcript_path(path) == "wing_memorypalace"
+
+
+def test_wing_from_transcript_path_keeps_hyphenated_project_slug():
+    path = "/home/jp/.claude/projects/-home-jp-Projects-my-awesome-app/session.jsonl"
+    assert _wing_from_transcript_path(path) == "wing_my-awesome-app"
 
 
 def test_wing_from_transcript_path_fallback():
@@ -620,7 +629,10 @@ def test_precompact_with_mempal_dir(tmp_path):
         with patch("mempalace.hooks_cli.subprocess.run") as mock_run:
             result = _capture_hook_output(
                 hook_precompact,
-                {"session_id": "test"},
+                {
+                    "session_id": "test",
+                    "transcript_path": str((tmp_path / "session.jsonl")),
+                },
                 state_dir=tmp_path,
             )
     assert result == {}
@@ -635,10 +647,13 @@ def test_precompact_with_mempal_dir_oserror(tmp_path):
         with patch("mempalace.hooks_cli.subprocess.run", side_effect=OSError("fail")):
             result = _capture_hook_output(
                 hook_precompact,
-                {"session_id": "test"},
+                {
+                    "session_id": "test",
+                    "transcript_path": str((tmp_path / "session.jsonl")),
+                },
                 state_dir=tmp_path,
             )
-    assert result == {}
+    assert result == {"decision": "block", "reason": PRECOMPACT_BLOCK_REASON}
 
 
 def test_precompact_with_timeout(tmp_path):
@@ -651,9 +666,11 @@ def test_precompact_with_timeout(tmp_path):
             side_effect=subprocess.TimeoutExpired(cmd="mine", timeout=60),
         ):
             result = _capture_hook_output(
-                hook_precompact, {"session_id": "test"}, state_dir=tmp_path
+                hook_precompact,
+                {"session_id": "test", "transcript_path": str((tmp_path / "session.jsonl"))},
+                state_dir=tmp_path,
             )
-    assert result == {}
+    assert result == {"decision": "block", "reason": PRECOMPACT_BLOCK_REASON}
 
 
 def test_precompact_mines_transcript_dir(tmp_path, monkeypatch):
@@ -672,6 +689,11 @@ def test_precompact_mines_transcript_dir(tmp_path, monkeypatch):
     # Verify mine dir is the transcript's parent
     call_args = mock_run.call_args[0][0]
     assert str(tmp_path) in call_args[-1]
+
+
+def test_precompact_without_transcript_path_blocks(tmp_path):
+    result = _capture_hook_output(hook_precompact, {"session_id": "test"}, state_dir=tmp_path)
+    assert result == {"decision": "block", "reason": PRECOMPACT_BLOCK_REASON}
 
 
 # --- run_hook ---
@@ -712,7 +734,7 @@ def test_run_hook_dispatches_precompact(tmp_path):
         with patch("mempalace.hooks_cli.STATE_DIR", tmp_path):
             with patch("mempalace.hooks_cli._output") as mock_output:
                 run_hook("precompact", "claude-code")
-    mock_output.assert_called_once_with({})
+    mock_output.assert_called_once_with({"decision": "block", "reason": PRECOMPACT_BLOCK_REASON})
 
 
 def test_run_hook_unknown_hook():
