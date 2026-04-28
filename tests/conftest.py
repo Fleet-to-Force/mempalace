@@ -42,7 +42,14 @@ def _install_missing_chromadb_stub():
     chromadb = types.ModuleType("chromadb")
     chromadb.__version__ = "0.0.0-missing"
 
+    class _MissingMetadata(dict):
+        def get(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
+
     class _MissingCollection:
+        def __init__(self):
+            self.metadata = _MissingMetadata()
+
         def __getattr__(self, _name):
             def _skip(*_args, **_kwargs):
                 pytest.skip("chromadb is not installed in this test environment")
@@ -59,6 +66,9 @@ def _install_missing_chromadb_stub():
 
         def get_collection(self, *args, **kwargs):
             return _MissingCollection()
+
+        def create_collection(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
 
         def delete_collection(self, *args, **kwargs):
             pytest.skip("chromadb is not installed in this test environment")
