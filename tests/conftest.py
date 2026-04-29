@@ -50,6 +50,7 @@ def _install_missing_chromadb_stub():
         def __init__(self):
             self.metadata = _MissingMetadata()
 
+    class _MissingCollection:
         def __getattr__(self, _name):
             def _skip(*_args, **_kwargs):
                 pytest.skip("chromadb is not installed in this test environment")
@@ -72,6 +73,16 @@ def _install_missing_chromadb_stub():
 
         def delete_collection(self, *args, **kwargs):
             pytest.skip("chromadb is not installed in this test environment")
+        def delete_collection(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
+try:  # noqa: E402
+    import chromadb  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    chromadb = types.ModuleType("chromadb")
+
+    class _MissingPersistentClient:
+        def __init__(self, *args, **kwargs):
+            raise ModuleNotFoundError("chromadb is not installed in this test environment")
 
     chromadb.PersistentClient = _MissingPersistentClient
     sys.modules["chromadb"] = chromadb
@@ -99,6 +110,13 @@ try:  # noqa: E402
     import yaml  # type: ignore  # noqa: F401
 except ModuleNotFoundError:  # pragma: no cover - environment-dependent
     _install_missing_yaml_stub()
+
+if "yaml" not in sys.modules:  # pragma: no cover - environment-dependent
+    yaml_stub = types.ModuleType("yaml")
+    yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+    yaml_stub.safe_dump = lambda *_args, **_kwargs: ""
+    yaml_stub.dump = yaml_stub.safe_dump
+    sys.modules["yaml"] = yaml_stub
 
 from mempalace.config import MempalaceConfig  # noqa: E402
 from mempalace.knowledge_graph import KnowledgeGraph  # noqa: E402

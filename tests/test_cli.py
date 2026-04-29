@@ -72,6 +72,7 @@ def test_cmd_ready_success(mock_config_cls, tmp_path, capsys):
         patch("importlib.util.find_spec", return_value=object()),
         patch("mempalace.backends.chroma.ChromaBackend", return_value=mock_backend),
     ):
+    with patch("mempalace.backends.chroma.ChromaBackend", return_value=mock_backend):
         cmd_ready(args)
 
     out = capsys.readouterr().out
@@ -122,6 +123,7 @@ def test_cmd_ready_json_success(mock_config_cls, tmp_path, capsys):
         patch("importlib.util.find_spec", return_value=object()),
         patch("mempalace.backends.chroma.ChromaBackend", return_value=mock_backend),
     ):
+    with patch("mempalace.backends.chroma.ChromaBackend", return_value=mock_backend):
         cmd_ready(args)
 
     out = capsys.readouterr().out
@@ -141,6 +143,7 @@ def test_cmd_ready_json_missing_chromadb_exits(mock_config_cls, tmp_path, capsys
 
     with (
         patch("importlib.util.find_spec", return_value=None),
+        patch.dict(sys.modules, {"mempalace.backends.chroma": None}),
         pytest.raises(SystemExit) as exc_info,
     ):
         cmd_ready(args)
@@ -152,6 +155,8 @@ def test_cmd_ready_json_missing_chromadb_exits(mock_config_cls, tmp_path, capsys
     assert payload["failed_checks"] >= 3
     checks_by_name = {c["name"]: c for c in payload["checks"]}
     assert checks_by_name["chromadb dependency available"]["ok"] is False
+    assert payload["failed_checks"] >= 2
+    checks_by_name = {c["name"]: c for c in payload["checks"]}
     assert checks_by_name["backend health"]["ok"] is False
     assert checks_by_name["drawers collection readable"]["ok"] is False
 

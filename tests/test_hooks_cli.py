@@ -834,6 +834,11 @@ def test_precompact_without_transcript_path_blocks(tmp_path):
     assert result == {"decision": "block", "reason": PRECOMPACT_BLOCK_REASON}
 
 
+def test_precompact_without_transcript_path_blocks(tmp_path):
+    result = _capture_hook_output(hook_precompact, {"session_id": "test"}, state_dir=tmp_path)
+    assert result == {"decision": "block", "reason": PRECOMPACT_BLOCK_REASON}
+
+
 # --- run_hook ---
 
 
