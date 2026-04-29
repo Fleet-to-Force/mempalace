@@ -12,7 +12,9 @@ instead of the real user profile.
 
 import os
 import shutil
+import sys
 import tempfile
+import types
 
 # ── Isolate HOME before any mempalace imports ──────────────────────────
 _original_env = {}
@@ -27,8 +29,76 @@ os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
 
 # Now it is safe to import mempalace modules that trigger initialisation.
-import chromadb  # noqa: E402
 import pytest  # noqa: E402
+
+
+def _install_missing_chromadb_stub():
+    """Install a minimal chromadb shim that skips dependency-bound tests.
+
+    This keeps dependency-independent tests runnable in constrained
+    environments while making chroma-backed tests skip explicitly.
+    """
+    global chromadb
+    chromadb = types.ModuleType("chromadb")
+    chromadb.__version__ = "0.0.0-missing"
+
+    class _MissingMetadata(dict):
+        def get(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
+
+    class _MissingCollection:
+        def __init__(self):
+            self.metadata = _MissingMetadata()
+
+        def __getattr__(self, _name):
+            def _skip(*_args, **_kwargs):
+                pytest.skip("chromadb is not installed in this test environment")
+
+            return _skip
+
+    class _MissingPersistentClient:
+        def __init__(self, *args, **kwargs):
+            self._args = args
+            self._kwargs = kwargs
+
+        def get_or_create_collection(self, *args, **kwargs):
+            return _MissingCollection()
+
+        def get_collection(self, *args, **kwargs):
+            return _MissingCollection()
+
+        def create_collection(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
+
+        def delete_collection(self, *args, **kwargs):
+            pytest.skip("chromadb is not installed in this test environment")
+
+    chromadb.PersistentClient = _MissingPersistentClient
+    sys.modules["chromadb"] = chromadb
+
+
+def _install_missing_yaml_stub():
+    """Install a minimal yaml shim that skips dependency-bound tests."""
+    yaml_stub = types.ModuleType("yaml")
+
+    def _missing_yaml(*_args, **_kwargs):
+        pytest.skip("pyyaml is not installed in this test environment")
+
+    yaml_stub.safe_load = _missing_yaml
+    yaml_stub.safe_dump = _missing_yaml
+    yaml_stub.dump = _missing_yaml
+    sys.modules["yaml"] = yaml_stub
+
+
+try:  # noqa: E402
+    import chromadb  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    _install_missing_chromadb_stub()
+
+try:  # noqa: E402
+    import yaml  # type: ignore  # noqa: F401
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    _install_missing_yaml_stub()
 
 from mempalace.config import MempalaceConfig  # noqa: E402
 from mempalace.knowledge_graph import KnowledgeGraph  # noqa: E402
@@ -44,6 +114,14 @@ def _reset_mcp_cache():
 
             mcp_server._client_cache = None
             mcp_server._collection_cache = None
+        except (ImportError, AttributeError):
+            pass
+        try:
+            # Reset the per-process quarantine gate so tests don't leak
+            # state through ChromaBackend._quarantined_paths.
+            from mempalace.backends.chroma import ChromaBackend
+
+            ChromaBackend._quarantined_paths.clear()
         except (ImportError, AttributeError):
             pass
 

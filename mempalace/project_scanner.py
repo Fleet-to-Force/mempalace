@@ -558,6 +558,7 @@ def to_detected_dict(
     return {
         "people": people_entries,
         "projects": proj_entries,
+        "topics": [],
         "uncertain": [],
     }
 
@@ -577,7 +578,7 @@ def _merge_detected(primary: dict, secondary: dict, drop_secondary_uncertain: bo
     """
     seen = {e["name"].lower() for cat in primary.values() for e in cat}
     merged = {k: list(v) for k, v in primary.items()}
-    for cat_key in ("people", "projects", "uncertain"):
+    for cat_key in ("people", "projects", "topics", "uncertain"):
         if cat_key == "uncertain" and drop_secondary_uncertain:
             continue
         for e in secondary.get(cat_key, []):
@@ -594,6 +595,9 @@ def discover_entities(
     prose_file_cap: int = 10,
     project_cap: int = 15,
     people_cap: int = 15,
+    llm_provider: object = None,
+    show_progress: bool = True,
+    corpus_origin: dict | None = None,
 ) -> dict:
     """Top-level entity discovery: real signals first, prose detection second.
 
@@ -604,10 +608,52 @@ def discover_entities(
       1. Package manifests (package.json, pyproject.toml, Cargo.toml, go.mod)
          → canonical project names
       2. Git commit authors → real people with real commit counts
-      3. Regex entity detection on prose files → supplementary names only
+      3. Claude Code conversation dirs (~/.claude/projects/) → per-session
+         project names (pulled from each session's ``cwd`` metadata)
+      4. Regex entity detection on prose files → supplementary names only
          mentioned in docs/notes (not code)
+      5. Optional LLM refinement pass — reclassifies ambiguous candidates
+         using the caller-supplied provider
+      6. Optional corpus-origin persona filter — when the corpus is
+         identified as AI-dialogue, candidates whose name matches an
+         agent_persona_name are moved to an ``agent_personas`` bucket
+         instead of being reported as people.
+
+    Passing ``llm_provider`` enables phase-2 refinement. The caller is
+    responsible for constructing the provider (``llm_client.get_provider``)
+    and confirming availability. Refinement is blocking-interactive:
+    progress prints to stderr; Ctrl-C returns partial results.
+
+    Passing ``corpus_origin`` enables corpus-origin persona reclassification.
+    The expected shape is the dict written by ``mempalace init`` to
+    ``<palace>/.mempalace/origin.json`` (see ``corpus_origin.py``).
     """
     projects, people = scan(project_dir)
+
+    # If the target is a Claude Code conversations root, extract per-project
+    # entries from there too. Same ProjectInfo shape, so dedup logic works.
+    from mempalace.convo_scanner import is_claude_projects_root, scan_claude_projects
+
+    root_path = Path(project_dir).expanduser().resolve()
+    if is_claude_projects_root(root_path):
+        convo_projects = scan_claude_projects(root_path)
+        # Dedup by name against the git-manifest list, preferring entries
+        # with more user_commits as signal strength. Keyed case-insensitively
+        # so a `pyproject.toml` name like `mempalace` and a Claude Code
+        # `cwd` variant like `MemPalace` collapse into one entry — matches
+        # the case-insensitive dedup used in `_merge_detected` and
+        # `miner.add_to_known_entities`.
+        by_name: dict[str, ProjectInfo] = {p.name.lower(): p for p in projects}
+        for cp in convo_projects:
+            key = cp.name.lower()
+            existing = by_name.get(key)
+            if existing is None or cp.user_commits > existing.user_commits:
+                by_name[key] = cp
+        projects = sorted(
+            by_name.values(),
+            key=lambda p: (not p.is_mine, -p.user_commits, -p.total_commits, p.name),
+        )
+
     real_signal = to_detected_dict(projects, people, project_cap=project_cap, people_cap=people_cap)
 
     # Secondary pass: prose-only extraction catches names mentioned in docs
@@ -618,14 +664,57 @@ def discover_entities(
     prose_detected = (
         detect_entities(prose_files, languages=languages)
         if prose_files
-        else {"people": [], "projects": [], "uncertain": []}
+        else {"people": [], "projects": [], "topics": [], "uncertain": []}
     )
 
-    # If git/manifests gave us real projects, suppress the regex "uncertain" bucket.
-    # That bucket is mostly noise (common words, CamelCase tech terms, etc.) and
-    # adding it to the review flow just makes the user do triage we can skip.
+    # Without LLM refinement, suppress regex "uncertain" noise when real
+    # manifest/git signal exists. With LLM refinement enabled, keep those
+    # candidates so the model can promote real entities or drop common words.
     has_real_signal = bool(projects) or bool(people)
-    return _merge_detected(real_signal, prose_detected, drop_secondary_uncertain=has_real_signal)
+    merged = _merge_detected(
+        real_signal,
+        prose_detected,
+        drop_secondary_uncertain=has_real_signal and llm_provider is None,
+    )
+
+    # Optional LLM refinement pass (when an llm_provider was supplied).
+    if llm_provider is not None:
+        from mempalace.llm_refine import collect_corpus_text, refine_entities
+
+        corpus = collect_corpus_text(str(project_dir))
+        result = refine_entities(
+            merged,
+            corpus,
+            llm_provider,
+            show_progress=show_progress,
+            allow_project_promotions=not has_real_signal,
+            corpus_origin=corpus_origin,
+        )
+        if show_progress:
+            status_bits = []
+            if result.cancelled:
+                status_bits.append("cancelled")
+            if result.reclassified:
+                status_bits.append(f"reclassified {result.reclassified}")
+            if result.dropped:
+                status_bits.append(f"dropped {result.dropped}")
+            if result.errors:
+                status_bits.append(f"{len(result.errors)} batch error(s)")
+            if status_bits:
+                import sys as _sys
+
+                print(f"  LLM refine: {', '.join(status_bits)}", file=_sys.stderr)
+        merged = result.merged
+
+    # Corpus-origin persona reclassification — applied last so it sweeps
+    # candidates contributed by every upstream source (manifests, git authors,
+    # prose, LLM refinement). Idempotent: no corpus_origin → exact v3.3.3 shape.
+    if corpus_origin is not None:
+        from mempalace.entity_detector import _apply_corpus_origin
+
+        merged = _apply_corpus_origin(merged, corpus_origin)
+
+    return merged
 
 
 # ==================== CLI ====================
