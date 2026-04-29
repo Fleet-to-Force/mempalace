@@ -310,7 +310,8 @@ def cmd_init(args):
                 )
         except LLMError as e:
             print(
-                f"  LLM init failed ({e}). Running heuristics-only — pass --no-llm to silence this."
+                f"  LLM init failed ({e}). "
+                f"Running heuristics-only — pass --no-llm to silence this."
             )
 
     # Pass 0: detect whether the corpus is AI-dialogue. Writes
@@ -732,8 +733,6 @@ def cmd_ready(args):
         sys.exit(1)
     if not getattr(args, "json", False):
         print("\n  Result: READY")
-
-
 def cmd_repair_status(args):
     """Read-only HNSW capacity health check (#1222)."""
     from .repair import status as repair_status

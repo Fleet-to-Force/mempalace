@@ -827,8 +827,6 @@ def test_precompact_mines_transcript_dir(tmp_path, monkeypatch):
     assert str(tmp_path) in cmd
     assert cmd[cmd.index("--mode") + 1] == "convos"
     assert cmd[cmd.index("--wing") + 1] == "sessions"
-
-
 def test_precompact_without_transcript_path_blocks(tmp_path):
     result = _capture_hook_output(hook_precompact, {"session_id": "test"}, state_dir=tmp_path)
     assert result == {"decision": "block", "reason": PRECOMPACT_BLOCK_REASON}
