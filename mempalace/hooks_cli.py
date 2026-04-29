@@ -294,6 +294,9 @@ def _maybe_auto_ingest():
 def _mine_sync():
     """Synchronously mine MEMPAL_DIR (precompact path).
 
+def _mine_sync():
+    """Synchronously mine MEMPAL_DIR (precompact path).
+
     Transcript convos are ingested separately via ``_ingest_transcript``
     in ``hook_precompact`` — keeping them out of this function avoids
     timeout stacking against the harness 30s ceiling (#1231 review).
@@ -706,6 +709,15 @@ def hook_precompact(data: dict, harness: str):
     if not transcript_path:
         _output({"decision": "block", "reason": PRECOMPACT_BLOCK_REASON})
         return
+
+    # Capture tool output via our normalize path before compaction loses it.
+    _ingest_transcript(transcript_path)
+
+    # Mine MEMPAL_DIR synchronously so project data lands before compaction.
+    if _mine_sync():
+        _output({})
+        return
+
 
     # Capture tool output via our normalize path before compaction loses it.
     _ingest_transcript(transcript_path)

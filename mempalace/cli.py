@@ -638,6 +638,7 @@ def cmd_ready(args):
     """Run production-readiness checks for the configured palace."""
     import importlib.util
     import json
+    from .backends.base import PalaceRef
     from types import SimpleNamespace
     import json
     from types import SimpleNamespace
@@ -681,6 +682,16 @@ def cmd_ready(args):
     backend = None
     health = None
     if chromadb_available:
+        from .backends.chroma import ChromaBackend
+
+        try:
+            backend = ChromaBackend()
+            health = backend.health()
+            checks.append(
+                {"name": "backend health", "ok": health.ok, "detail": health.detail or "ok"}
+            )
+        except Exception as e:
+            checks.append({"name": "backend health", "ok": False, "detail": str(e)})
         try:
             from .backends.chroma import ChromaBackend
         except Exception as e:
